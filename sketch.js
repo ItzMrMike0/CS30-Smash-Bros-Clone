@@ -36,6 +36,18 @@ const STAGE_X = 240;
 const STAGE_Y = 500;
 const STAGE_WIDTH = 800;
 const STAGE_HEIGHT = 50;
+const STAGE_SPRITE_HEIGHT = 300;
+
+let fdStageImg;
+let fdBackgroundImg;
+
+function playerOverlapsStage(p) {
+  const playerLeft = p.position.x - p.stats.dimension / 2;
+  const playerRight = p.position.x + p.stats.dimension / 2;
+  const stageLeft = STAGE_X;
+  const stageRight = STAGE_X + STAGE_WIDTH;
+  return playerRight > stageLeft && playerLeft < stageRight;
+}
 
 // Marth stats
 let marthStats = {
@@ -61,6 +73,7 @@ class Player {
 
     // Physics and stats
     this.position = createVector(x, y);
+    this.previousPosition = createVector(x, y);
     this.velocity = createVector(0, 0);
     this.acceleration = createVector(0, 0);
     this.stats = stats;
@@ -80,6 +93,18 @@ class Player {
     this.landingLagTimer = LANDING_LAG_TIMER;
   }
 
+  isOnStageTop() {
+    if (!playerOverlapsStage(this)) {
+      return false;
+    }
+
+    const half = this.stats.dimension / 2;
+    const playerBottom = this.position.y + half;
+
+    // Only count as "on stage" when you're essentially on the top surface.
+    return this.velocity.y >= 0 && abs(playerBottom - STAGE_Y) <= 0.5;
+  }
+
   // Display the player
   display() {
 
@@ -95,6 +120,9 @@ class Player {
   // Update the player’s state and movement
   update() {
 
+    // Track last position for collision resolution
+    this.previousPosition.set(this.position);
+
     // Constant gravity
     this.addGravity();
 
@@ -103,11 +131,52 @@ class Player {
 
     // Add vector forces
     this.addVectors();
+
+    // Resolve collisions after movement (prevents phasing through stage)
+    this.resolveStageCollision();
+  }
+
+  resolveStageCollision() {
+    if (!playerOverlapsStage(this)) {
+      return;
+    }
+
+    const half = this.stats.dimension / 2;
+
+    const prevTop = this.previousPosition.y - half;
+    const prevBottom = this.previousPosition.y + half;
+    const nextTop = this.position.y - half;
+    const nextBottom = this.position.y + half;
+
+    const stageTop = STAGE_Y;
+    const stageBottom = STAGE_Y + STAGE_HEIGHT;
+
+    const wasAbove = prevBottom <= stageTop;
+    const nowBelowTop = nextBottom >= stageTop;
+
+    const wasBelow = prevTop >= stageBottom;
+    const nowAboveBottom = nextTop <= stageBottom;
+
+    // Land on top of stage
+    if (this.velocity.y >= 0 && wasAbove && nowBelowTop) {
+      this.velocity.y = 0;
+      this.position.y = stageTop - half;
+      if (this.state === "airborne") {
+        this.state = "landing";
+      }
+      return;
+    }
+
+    // Hit underside of stage (prevents jumping through)
+    if (this.velocity.y < 0 && wasBelow && nowAboveBottom) {
+      this.velocity.y = 0;
+      this.position.y = stageBottom + half;
+    }
   }
 
   // Add gravity to player
   addGravity() {
-    if (this.position.y + this.stats.dimension / 2 < STAGE_Y) {
+    if (!this.isOnStageTop()) {
       this.velocity.y += this.stats.gravity;
 
       // Cap the fall speed if player isn't fast falling
@@ -188,8 +257,8 @@ class Player {
         this.stats.color = "pink";
       }
 
-      // State trigger
-      if (this.position.y + this.stats.dimension / 2 >= STAGE_Y) {
+      // State trigger (only land if horizontally over the stage)
+      if (this.position.y + this.stats.dimension / 2 >= STAGE_Y && playerOverlapsStage(this)) {
         this.state = "landing";
       }
       break;
@@ -212,6 +281,12 @@ class Player {
       // State behaviour
       this.landingLagTimer --;
       this.stats.color = "red";
+
+      // If you slide/leave the platform during landing, fall off.
+      if (!playerOverlapsStage(this)) {
+        this.state = "airborne";
+        break;
+      }
 
       // Reset velocity and snap to stage
       this.velocity.y = 0;
@@ -329,6 +404,11 @@ class Player {
   }
 }
 
+function preload() {
+  fdStageImg = loadImage("Assets/Stage/fd.png");
+  fdBackgroundImg = loadImage("Assets/Stage/fdbackground.png");
+}
+
 // Setup player
 function setup() {
   createCanvas(SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -339,12 +419,26 @@ function setup() {
 
 // Manage players
 function draw() {
-  background(0);
+  if (fdBackgroundImg) {
+    imageMode(CORNER);
+    image(fdBackgroundImg, 0, 0, width, height);
+  }
+  else {
+    background(0);
+  }
 
-  // Draw stage
-  rectMode(CORNER);
-  fill("white");
-  rect(STAGE_X, STAGE_Y, STAGE_WIDTH, STAGE_HEIGHT);
+  // Draw stage (image aligned to the stage hitbox)
+  if (fdStageImg) {
+    imageMode(CORNER);
+
+    // Keep X aligned to hitbox; align image top to hitbox top.
+    image(fdStageImg, STAGE_X, STAGE_Y - 20 , STAGE_WIDTH, STAGE_SPRITE_HEIGHT);
+  }
+  else {
+    rectMode(CORNER);
+    fill("white");
+    rect(STAGE_X, STAGE_Y, STAGE_WIDTH, STAGE_HEIGHT);
+  }
 
   // Update player states and movement
   player.update();
